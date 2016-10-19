@@ -3,6 +3,16 @@ void end() {
     exit(0);
 }
 
+array extensions = ({
+#if constant(Protocols.WebSocket.permessagedeflate)
+        Protocols.WebSocket.permessagedeflate(),
+        Protocols.WebSocket.conformance_check
+#elif constant(Protocols.WebSocket.defragment)
+        Protocols.WebSocket.defragment,
+        Protocols.WebSocket.conformance_check
+#endif
+});
+
 void update_reports() {
     object con = Protocols.WebSocket.Connection();
 
@@ -15,39 +25,47 @@ void update_reports() {
 
 }
 
+int count;
+ADT.Queue todo;
+mapping running = ([]);
+
+void start_case() {
+    werror("\rDone %d/%d tests.    ", count-sizeof(todo)-sizeof(running), count);
+    if (!todo->is_empty()) {
+        running[Case(todo->get())] = 1;
+    } else if (!sizeof(running)) {
+        werror("\n");
+        update_reports();
+    }
+}
+
 void incoming_init(object frame, object from) {
-    int max = (int)frame->text;
+    count = (int)frame->text;
     from->close();
-    Case(0, max);
+    todo = ADT.Queue(@enumerate(count));
+    for (int i = 0; i < 10; i++) start_case();
 }
 
 class Case {
-    int num, max;
+    int num;
 
-    void create(int num, int max) {
+    void create(int num) {
         this::num = num;
-        this::max = max;
 
         object con = Protocols.WebSocket.Connection();
 
-        werror("Doing text %d/%d... ", num, max);
-
         con->onclose = onclose;
-        con->onmessage = Protocols.WebSocket.defragment(incoming, con);
+        con->onmessage = incoming;
 
-        if (!con->connect("ws://127.0.0.1:9001/runCase?agent=Pike&case="+(string)num)) {
+        if (!con->connect("ws://127.0.0.1:9001/runCase?agent=Pike&case="+(string)num, 0, extensions)) {
             werror("Could not connect.\n");
             exit(1);
         }
     }
 
     void onclose(object from) {
-        werror("done.\n");
-        if (num < max) {
-            Case(num+1, max);
-        } else {
-            update_reports();
-        }
+        m_delete(running, this);
+        start_case();
     }
 
     void incoming(object frame, object from) {
@@ -65,7 +83,7 @@ class Case {
 int main(int argc, array(string) argv) {
     object con = Protocols.WebSocket.Connection();
 
-    con->onmessage = Protocols.WebSocket.defragment(incoming_init, con);
+    con->onmessage = incoming_init;
     if (!con->connect("ws://127.0.0.1:9001/getCaseCount")) {
         werror("Could not connect.\n");
         return 0;
